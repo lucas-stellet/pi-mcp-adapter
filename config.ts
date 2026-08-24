@@ -1,7 +1,7 @@
 // config.ts - Config loading with import support
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath, getConfigDirName } from "./agent-dir.ts";
@@ -83,7 +83,7 @@ const IMPORT_PATHS: Record<ImportKind, string[]> = {
 };
 
 interface ConfigSourceSpec {
-  id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-project" | "pi-project";
+  id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-ancestor" | "shared-project" | "pi-project";
   label: string;
   readPath: string;
   writePath: string;
@@ -175,6 +175,33 @@ export function getGenericGlobalConfigPath(): string {
 
 export function getProjectConfigPath(cwd = process.cwd()): string {
   return resolve(cwd, PROJECT_CONFIG_NAME);
+}
+
+function isPathInsideHome(target: string, home: string): boolean {
+  const resolved = resolve(target);
+  const resolvedHome = resolve(home);
+  return resolved === resolvedHome || resolved.startsWith(`${resolvedHome}${sep}`);
+}
+
+/**
+ * Existing ancestor `.mcp.json` files between cwd and $HOME, farthest first.
+ * Does not include cwd, $HOME itself, or anything outside $HOME.
+ */
+export function getAncestorProjectConfigPaths(cwd = process.cwd()): string[] {
+  const home = resolve(homedir());
+  const start = resolve(cwd);
+  const found: string[] = [];
+  let current = dirname(start);
+
+  while (isPathInsideHome(current, home) && resolve(current) !== home) {
+    const configPath = join(current, PROJECT_CONFIG_NAME);
+    if (existsSync(configPath)) found.push(configPath);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return found.reverse();
 }
 
 export function getProjectPiConfigPath(cwd = process.cwd()): string {
@@ -455,6 +482,22 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
     shared: false,
     scope: "global",
   });
+
+  const seenReadPaths = new Set(sources.map((source) => source.readPath));
+  for (const ancestorPath of getAncestorProjectConfigPaths(cwd)) {
+    if (ancestorPath === userPath || ancestorPath === projectPath || seenReadPaths.has(ancestorPath)) continue;
+    sources.push({
+      id: "shared-ancestor",
+      label: `ancestor MCP (${basename(dirname(ancestorPath))})`,
+      readPath: ancestorPath,
+      writePath: projectPath,
+      kind: "import",
+      importKind: "ancestor MCP config",
+      shared: true,
+      scope: "project",
+    });
+    seenReadPaths.add(ancestorPath);
+  }
 
   if (projectPath !== userPath) {
     sources.push({

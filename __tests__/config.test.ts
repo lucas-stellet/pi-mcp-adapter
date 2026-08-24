@@ -537,6 +537,93 @@ describe("config discovery", () => {
     expect(config.mcpServers.brandedProject).toMatchObject({ command: "branded" });
   });
 
+  it("merges ancestor .mcp.json into one map, with the child winning key conflicts", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-ancestor-home-"));
+    const workspace = join(home, "astride");
+    const mid = join(workspace, "team");
+    const project = join(mid, "app");
+    process.env.HOME = home;
+    mkdirSync(project, { recursive: true });
+    process.chdir(project);
+
+    writeJson(join(home, ".mcp.json"), {
+      mcpServers: { homeOnly: { command: "home" } },
+    });
+    writeJson(join(workspace, ".mcp.json"), {
+      mcpServers: {
+        shared: { command: "workspace", env: { FROM: "workspace" } },
+        workspaceOnly: { command: "workspace-only" },
+      },
+    });
+    writeJson(join(workspace, ".pi", "mcp.json"), {
+      mcpServers: { leakedPi: { command: "should-not-inherit" } },
+    });
+    writeJson(join(mid, ".mcp.json"), {
+      mcpServers: {
+        shared: { command: "mid" },
+        midOnly: { command: "mid-only" },
+      },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: {
+        shared: { command: "child", args: ["--child"] },
+        childOnly: { command: "child-only" },
+      },
+    });
+
+    const { getAncestorProjectConfigPaths, getMcpDiscoverySummary, getServerProvenance, loadMcpConfig } = await import("../config.ts");
+    expect(getAncestorProjectConfigPaths(project)).toEqual([
+      join(workspace, ".mcp.json"),
+      join(mid, ".mcp.json"),
+    ]);
+
+    const config = loadMcpConfig();
+    expect(config.mcpServers).toEqual({
+      shared: { command: "child", args: ["--child"], env: { FROM: "workspace" } },
+      workspaceOnly: { command: "workspace-only" },
+      midOnly: { command: "mid-only" },
+      childOnly: { command: "child-only" },
+    });
+    expect(config.mcpServers).not.toHaveProperty("homeOnly");
+    expect(config.mcpServers).not.toHaveProperty("leakedPi");
+
+    const summary = getMcpDiscoverySummary();
+    expect(summary.sources.filter((source) => source.id === "shared-ancestor" && source.exists).map((source) => source.path)).toEqual([
+      join(workspace, ".mcp.json"),
+      join(mid, ".mcp.json"),
+    ]);
+    expect(getServerProvenance().get("workspaceOnly")).toMatchObject({
+      path: join(project, ".mcp.json"),
+      kind: "import",
+    });
+    expect(getServerProvenance().get("shared")).toMatchObject({
+      path: join(project, ".mcp.json"),
+      kind: "project",
+    });
+  });
+
+  it("does not walk ancestor .mcp.json when the project is outside $HOME", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-ancestor-outside-home-"));
+    const outsideRoot = mkdtempSync(join(tmpdir(), "pi-mcp-ancestor-outside-project-"));
+    const project = join(outsideRoot, "app");
+    process.env.HOME = home;
+    mkdirSync(project, { recursive: true });
+    process.chdir(project);
+
+    writeJson(join(outsideRoot, ".mcp.json"), {
+      mcpServers: { parent: { command: "outside-parent" } },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: { child: { command: "outside-child" } },
+    });
+
+    const { getAncestorProjectConfigPaths, loadMcpConfig } = await import("../config.ts");
+    expect(getAncestorProjectConfigPaths(project)).toEqual([]);
+    expect(loadMcpConfig().mcpServers).toEqual({
+      child: { command: "outside-child" },
+    });
+  });
+
   it("replaces transport-specific fields when an override switches to or from a socket", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));

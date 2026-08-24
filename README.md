@@ -66,8 +66,11 @@ Precedence is:
 2. `~/.agents/mcp.json`
 3. `~/.agents/mcp/mcp.json`
 4. `<Pi agent dir>/mcp.json`
-5. `.mcp.json`
-6. `.pi/mcp.json`
+5. Ancestor `.mcp.json` files between the project and `$HOME` (farthest first; `$HOME/.mcp.json` is not read this way)
+6. `.mcp.json`
+7. `.pi/mcp.json`
+
+Ancestor `.mcp.json` files are merged at runtime into one effective server map. The closer file wins on conflicting keys. Ancestor `.pi/mcp.json` files are not inherited. Writes (`directTools`, `/mcp disable`) stay in the current project — parent files are never rewritten.
 
 `/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
 
