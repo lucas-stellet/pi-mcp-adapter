@@ -41,7 +41,7 @@
   },
   "scripts": {
     "build:public": "tsc -p tsconfig.public.json",
-    "prepare": "npm run build:public",
+    "prepare": "node ./scripts/prepare.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node test-runner.mjs",
     "test:vitest": "vitest run",
